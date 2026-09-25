@@ -1,0 +1,162 @@
+import React, { useEffect, useState } from 'react';
+import api from '../api/axios';
+import toast from 'react-hot-toast';
+
+const ACTION_COLORS = {
+    USER_ACTIVATED: { style: { color: 'var(--status-success)' }, label: 'Activated' },
+    USER_DEACTIVATED: { style: { color: 'var(--status-warning)' }, label: 'Deactivated' },
+    USER_DELETED: { style: { color: 'var(--status-error)' }, label: 'Deleted' },
+    default: { style: { color: 'var(--status-info)' }, label: 'Action' },
+};
+
+export default function AuditLogs() {
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [actionFilter, setActionFilter] = useState('');
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const LIMIT = 50;
+
+    useEffect(() => {
+        fetchLogs();
+    }, [page, actionFilter]);
+
+    // Debounce search
+    useEffect(() => {
+        const t = setTimeout(() => { setPage(1); fetchLogs(); }, 400);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    const fetchLogs = async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams({ page, limit: LIMIT });
+            if (actionFilter) params.append('action', actionFilter);
+            if (search) params.append('search', search);
+            const res = await api.get(`/admin/audit-logs?${params}`);
+            setLogs(res.data.logs || []);
+            setTotal(res.data.total || 0);
+        } catch {
+            toast.error('Failed to load audit logs');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const totalPages = Math.ceil(total / LIMIT);
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h1 className="text-2xl font-bold text-[var(--text)]">Audit Logs</h1>
+                <p className="text-[var(--muted)] text-sm mt-1">Track all admin actions on the platform</p>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3">
+                <input
+                    type="text"
+                    placeholder="Search by name, email or action..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="flex-1 min-w-[200px] px-4 py-2 bg-[var(--surface)] border border-[var(--border)] rounded-xl text-[var(--text)] text-sm placeholder-[var(--muted)] focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+                <select
+                    value={actionFilter}
+                    onChange={e => { setActionFilter(e.target.value); setPage(1); }}
+                    className="px-4 py-2 bg-[var(--surface)] border border-[var(--border)] rounded-xl text-[var(--text)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
+                >
+                    <option value="">All Actions</option>
+                    <option value="USER_ACTIVATED">User Activated</option>
+                    <option value="USER_DEACTIVATED">User Deactivated</option>
+                    <option value="USER_DELETED">User Deleted</option>
+                </select>
+                <button
+                    onClick={() => { setPage(1); fetchLogs(); }}
+                    className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 rounded-xl text-[var(--text)] text-sm transition"
+                    aria-label="Refresh audit logs"
+                >
+                    Refresh
+                </button>
+            </div>
+
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden">
+                <table className="w-full">
+                    <thead>
+                        <tr className="border-b border-[var(--border)]">
+                            <th className="text-left px-5 py-3 text-xs font-semibold text-[var(--muted)] uppercase" scope="col">Action</th>
+                            <th className="text-left px-5 py-3 text-xs font-semibold text-[var(--muted)] uppercase" scope="col">Admin</th>
+                            <th className="text-left px-5 py-3 text-xs font-semibold text-[var(--muted)] uppercase" scope="col">Resource</th>
+                            <th className="text-left px-5 py-3 text-xs font-semibold text-[var(--muted)] uppercase" scope="col">IP</th>
+                            <th className="text-left px-5 py-3 text-xs font-semibold text-[var(--muted)] uppercase" scope="col">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {loading ? (
+                            <tr><td colSpan={5} className="text-center py-10 text-[var(--muted)]">Loading...</td></tr>
+                        ) : logs.length === 0 ? (
+                            <tr><td colSpan={5} className="text-center py-10 text-[var(--muted)]">No audit logs found</td></tr>
+                        ) : logs.map(log => (
+                            <tr key={log.id} className="border-b border-[var(--border)] hover:bg-[var(--surface-2)] transition">
+                                <td className="px-5 py-3">
+                                    <span 
+                                        className="text-sm font-medium flex items-center gap-2"
+                                        style={ACTION_COLORS[log.action]?.style || ACTION_COLORS.default.style}
+                                        role="status"
+                                        aria-label={`Action: ${log.action.replace(/_/g, ' ')}`}
+                                    >
+                                        <span className="w-2 h-2 rounded-full" style={ACTION_COLORS[log.action]?.style || ACTION_COLORS.default.style}></span>
+                                        {log.action}
+                                    </span>
+                                </td>
+                                <td className="px-5 py-3">
+                                    <div className="text-sm text-[var(--muted)]">{log.user_name || 'System'}</div>
+                                    {log.user_email && <div className="text-xs text-[var(--muted)]">{log.user_email}</div>}
+                                </td>
+                                <td className="px-5 py-3 text-sm text-[var(--muted)]">{log.resource || '—'}</td>
+                                <td className="px-5 py-3 text-sm text-[var(--muted)]">{log.ip_address || '—'}</td>
+                                <td className="px-5 py-3 text-sm text-[var(--muted)]">{new Date(log.created_at).toLocaleString()}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className="flex items-center justify-between">
+                    <p className="text-sm text-[var(--muted)]">
+                        Showing {((page - 1) * LIMIT) + 1}–{Math.min(page * LIMIT, total)} of {total}
+                    </p>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            className="px-3 py-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg text-sm text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition"
+                        >
+                            Previous
+                        </button>
+                        <span className="px-3 py-1 text-sm text-[var(--muted)]">
+                            {page} / {totalPages}
+                        </span>
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="px-3 py-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg text-sm text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition"
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+
+
+
+
+

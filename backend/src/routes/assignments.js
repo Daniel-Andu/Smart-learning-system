@@ -1,0 +1,496 @@
+const express = require('express');
+const { query } = require('../db');
+const { authenticate, authorize } = require('../middleware/auth');
+const { createUploader } = require('../lib/cloudinary');
+const router = express.Router();
+
+// Cloudinary uploader for assignment file attachments (PDF, doc, images — 20 MB max)
+const assignmentUpload = createUploader({
+    folder: 'eduverse/assignments/submissions',
+    allowedFormats: ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'txt'],
+    resourceType: 'raw',
+    fileSizeMb: 20,
+});
+
+// Cloudinary uploader for instructor assignment briefs (PDF/doc only — 20 MB max)
+const briefUpload = createUploader({
+    folder: 'eduverse/assignments/briefs',
+    allowedFormats: ['pdf', 'doc', 'docx'],
+    resourceType: 'raw',
+    fileSizeMb: 20,
+});
+
+// POST /api/assignments/upload — student uploads a file attachment
+router.post('/upload', authenticate, authorize('student'), assignmentUpload.single('file'), async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const rawName = req.file.originalname || req.file.path.split('/').pop();
+        res.json({ url: req.file.path, name: rawName });
+    } catch (err) { next(err); }
+});
+
+// POST /api/assignments/upload-brief — instructor uploads assignment brief file
+router.post('/upload-brief', authenticate, authorize('instructor', 'admin'), briefUpload.single('file'), async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        // Strip timestamp prefix for clean display name
+        const rawName = req.file.originalname
+            ? req.file.originalname
+            : req.file.path.split('/').pop().replace(/^\d+-/, '');
+        res.json({ url: req.file.path, name: rawName });
+    } catch (err) { next(err); }
+});
+
+// GET /api/assignments/course/:courseId
+router.get('/course/:courseId', authenticate, async (req, res, next) => {
+    try {
+        const { courseId } = req.params;
+        const result = await query(
+            `SELECT a.*, c.title as course_name, u.name as instructor_name
+             FROM assignments a
+             JOIN courses c ON a.course_id = c.id
+             LEFT JOIN users u ON c.instructor_id = u.id
+             WHERE a.course_id = $1
+             ORDER BY a.created_at DESC`,
+            [courseId]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// GET /api/assignments/student
+router.get('/student', authenticate, authorize('student'), async (req, res, next) => {
+    try {
+        const result = await query(
+            `SELECT a.*, c.title as course_name, u.name as instructor_name,
+                    CASE 
+                        WHEN sub.id IS NOT NULL THEN 'submitted'
+                        WHEN a.due_date < NOW() THEN 'overdue'
+                        ELSE 'pending'
+                    END as status
+             FROM assignments a
+             JOIN courses c ON a.course_id = c.id
+             LEFT JOIN users u ON c.instructor_id = u.id
+             LEFT JOIN enrollments e ON c.id = e.course_id AND e.student_id = $1
+             LEFT JOIN assignment_submissions sub ON a.id = sub.assignment_id AND sub.student_id = $1
+             WHERE e.student_id = $1
+             ORDER BY a.due_date ASC`,
+            [req.user.id]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// GET /api/assignments/instructor
+router.get('/instructor', authenticate, authorize('instructor', 'admin'), async (req, res, next) => {
+    try {
+        const result = await query(
+            `SELECT a.*,
+                    c.title as course_title,
+                    COUNT(sub.id) as submission_count,
+                    COUNT(CASE WHEN sub.score IS NOT NULL THEN 1 END) as graded_count,
+                    CASE
+                        WHEN a.due_date < NOW() THEN 'overdue'
+                        WHEN a.due_date < NOW() + INTERVAL '3 days' THEN 'due_soon'
+                        ELSE 'active'
+                    END as status
+             FROM assignments a
+             JOIN courses c ON a.course_id = c.id
+             LEFT JOIN assignment_submissions sub ON a.id = sub.assignment_id
+             WHERE c.instructor_id = $1
+             GROUP BY a.id, c.title
+             ORDER BY a.created_at DESC`,
+            [req.user.id]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// GET /api/assignments/student/submissions
+router.get('/student/submissions', authenticate, authorize('student'), async (req, res, next) => {
+    try {
+        const result = await query(
+            `SELECT s.*, a.title, a.due_date, a.max_points as total_points, c.title as course_title
+             FROM assignment_submissions s
+             JOIN assignments a ON s.assignment_id = a.id
+             JOIN courses c ON a.course_id = c.id
+             WHERE s.user_id = $1
+             ORDER BY s.submitted_at DESC`,
+            [req.user.id]
+        );
+        res.json({ submissions: result.rows });
+    } catch (err) { next(err); }
+});
+
+// POST /api/assignments
+router.post('/', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { title, description, instructions, courseId, dueDate, maxPoints, attachment_url, attachment_name } = req.body;
+
+        if (!courseId) return res.status(400).json({ error: 'Course ID is required' });
+
+        const course = await query('SELECT instructor_id FROM courses WHERE id = $1', [courseId]);
+        if (!course.rows.length) return res.status(404).json({ error: 'Course not found' });
+        if (course.rows[0].instructor_id !== req.user.id) {
+            return res.status(403).json({ error: 'Unauthorized: You do not own this course' });
+        }
+
+        const result = await query(
+            `INSERT INTO assignments
+                (title, description, instructions, course_id, due_date, max_points, attachment_url, attachment_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING *`,
+            [title, description || null, instructions || null, courseId, dueDate, maxPoints, attachment_url || null, attachment_name || null]
+        );
+
+        res.status(201).json(result.rows[0]);
+    } catch (err) { next(err); }
+});
+
+// PUT /api/assignments/:id
+router.put('/:id', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { title, description, instructions, due_date, max_points, attachment_url, attachment_name } = req.body;
+        const { id } = req.params;
+
+        const result = await query(
+            `UPDATE assignments
+             SET title           = $1,
+                 description     = $2,
+                 instructions    = $3,
+                 due_date        = $4,
+                 max_points      = $5,
+                 attachment_url  = $6,
+                 attachment_name = $7,
+                 updated_at      = NOW()
+             WHERE id = $8
+             RETURNING *`,
+            [title, description || null, instructions || null, due_date, max_points, attachment_url || null, attachment_name || null, id]
+        );
+
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Assignment not found' });
+        res.json(result.rows[0]);
+    } catch (err) { next(err); }
+});
+
+// DELETE /api/assignments/:id
+router.delete('/:id', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        const result = await query(
+            `DELETE FROM assignments WHERE id = $1 RETURNING *`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assignment not found' });
+        }
+
+        res.json({ message: 'Assignment deleted successfully' });
+    } catch (err) {
+        next(err);
+    }
+});
+
+// POST /api/assignments/:id/submit - Student submits an assignment
+router.post('/:id/submit', authenticate, authorize('student'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { submission_text, file_url, file_name } = req.body;
+
+        // Verify assignment exists
+        const assignment = await query('SELECT * FROM assignments WHERE id = $1', [id]);
+        if (!assignment.rows.length) {
+            return res.status(404).json({ error: 'Assignment not found' });
+        }
+
+        // Upsert submission (allow resubmission)
+        const result = await query(
+            `INSERT INTO assignment_submissions (assignment_id, user_id, content, file_url, submitted_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (assignment_id, user_id)
+             DO UPDATE SET content = $3, file_url = $4, submitted_at = NOW()
+             RETURNING *`,
+            [id, req.user.id, submission_text || null, file_url || null]
+        );
+
+        res.status(201).json({ submission: result.rows[0] });
+    } catch (err) { next(err); }
+});
+
+// GET /api/assignments/:id/submissions
+// Returns submitted students WITH their content + file, AND a list of not-yet-submitted enrolled students
+router.get('/:id/submissions', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        // Verify instructor owns this assignment through the course
+        const assignmentCheck = await query(
+            `SELECT a.*, c.instructor_id, c.id as course_id
+             FROM assignments a
+             JOIN courses c ON a.course_id = c.id
+             WHERE a.id = $1`,
+            [id]
+        );
+        if (!assignmentCheck.rows.length) return res.status(404).json({ error: 'Assignment not found' });
+        if (assignmentCheck.rows[0].instructor_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const courseId = assignmentCheck.rows[0].course_id;
+
+        // Fetch submitted students
+        const submitted = await query(
+            `SELECT sub.*, u.name as student_name, u.email as student_email,
+                    u.avatar_url as student_avatar,
+                    a.title as assignment_title, a.max_points
+             FROM assignment_submissions sub
+             JOIN users u ON sub.user_id = u.id
+             JOIN assignments a ON sub.assignment_id = a.id
+             WHERE sub.assignment_id = $1
+             ORDER BY sub.submitted_at DESC`,
+            [id]
+        );
+
+        // Fetch enrolled students who have NOT submitted
+        const notSubmitted = await query(
+            `SELECT u.id, u.name, u.email, u.avatar_url
+             FROM enrollments e
+             JOIN users u ON e.student_id = u.id
+             WHERE e.course_id = $1
+             AND u.id NOT IN (
+                 SELECT user_id FROM assignment_submissions WHERE assignment_id = $2
+             )
+             ORDER BY u.name ASC`,
+            [courseId, id]
+        );
+
+        res.json({
+            submissions: submitted.rows,
+            not_submitted: notSubmitted.rows,
+            assignment: assignmentCheck.rows[0],
+        });
+    } catch (err) { next(err); }
+});
+
+// POST /api/assignments/:id/grade - Grade a submission
+router.post('/:id/grade', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { submission_id, score, feedback } = req.body;
+
+        // Verify instructor owns the assignment through course
+        const assignment = await query(`
+            SELECT c.instructor_id 
+            FROM assignments a 
+            JOIN courses c ON a.course_id = c.id 
+            WHERE a.id = $1`, [id]);
+        if (!assignment.rows.length || assignment.rows[0].instructor_id !== req.user.id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const graded = await query(
+            `UPDATE assignment_submissions 
+             SET score = $1, feedback = $2
+             WHERE id = $3 AND assignment_id = $4
+             RETURNING *`,
+            [score, feedback, submission_id, id]
+        );
+
+        if (graded.rows.length === 0) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+
+        res.json({ submission: graded.rows[0] });
+    } catch (err) { next(err); }
+});
+
+// GET /api/assignments/:id/analytics - Get assignment analytics for instructor
+router.get('/:id/analytics', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        // Verify instructor owns the assignment through course
+        const assignment = await query(`
+            SELECT c.instructor_id 
+            FROM assignments a 
+            JOIN courses c ON a.course_id = c.id 
+            WHERE a.id = $1`, [id]);
+        if (!assignment.rows.length || assignment.rows[0].instructor_id !== req.user.id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const [
+            submissionStats,
+            scoreDistribution,
+            timeAnalysis,
+            assignmentDetails
+        ] = await Promise.all([
+            query(
+                `SELECT 
+                    COUNT(*) as total_submissions,
+                    COUNT(CASE WHEN score IS NOT NULL THEN 1 END) as graded_submissions,
+                    AVG(score) as avg_score,
+                    MAX(score) as max_score,
+                    MIN(score) as min_score,
+                    COUNT(CASE WHEN sub.submitted_at <= a.due_date THEN 1 END) as on_time_submissions
+                 FROM assignment_submissions sub
+                 JOIN assignments a ON sub.assignment_id = a.id
+                 WHERE sub.assignment_id = $1`,
+                [id]
+            ),
+            query(
+                `SELECT 
+                    CASE 
+                        WHEN score >= 90 THEN 'A (90-100)'
+                        WHEN score >= 80 THEN 'B (80-89)'
+                        WHEN score >= 70 THEN 'C (70-79)'
+                        WHEN score >= 60 THEN 'D (60-69)'
+                        ELSE 'F (0-59)'
+                    END as grade_range,
+                    COUNT(*) as count
+                 FROM assignment_submissions
+                 WHERE assignment_id = $1 AND score IS NOT NULL
+                 GROUP BY 
+                    CASE 
+                        WHEN score >= 90 THEN 'A (90-100)'
+                        WHEN score >= 80 THEN 'B (80-89)'
+                        WHEN score >= 70 THEN 'C (70-79)'
+                        WHEN score >= 60 THEN 'D (60-69)'
+                        ELSE 'F (0-59)'
+                    END
+                 ORDER BY grade_range`,
+                [id]
+            ),
+            query(
+                `SELECT 
+                    COUNT(CASE WHEN sub.submitted_at > a.due_date THEN 1 END) as late_submissions,
+                    ROUND(
+                        AVG(
+                            CASE WHEN sub.submitted_at > a.due_date
+                            THEN EXTRACT(EPOCH FROM (sub.submitted_at - a.due_date)) / 3600
+                            END
+                        )::numeric, 1
+                    ) as avg_hours_late
+                 FROM assignment_submissions sub
+                 JOIN assignments a ON sub.assignment_id = a.id
+                 WHERE sub.assignment_id = $1 AND sub.submitted_at IS NOT NULL`,
+                [id]
+            ),
+            query(
+                `SELECT a.*, c.title as course_title
+                 FROM assignments a
+                 JOIN courses c ON a.course_id = c.id
+                 WHERE a.id = $1`,
+                [id]
+            )
+        ]);
+
+        res.json({
+            submission_stats: submissionStats.rows[0],
+            score_distribution: scoreDistribution.rows,
+            time_analysis: timeAnalysis.rows[0],
+            assignment_details: assignmentDetails.rows[0]
+        });
+    } catch (err) { next(err); }
+});
+
+// POST /api/assignments/:id/bulk-grade - Bulk grade multiple submissions
+router.post('/:id/bulk-grade', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { grades } = req.body; // Array of {submission_id, score, feedback}
+
+        if (!Array.isArray(grades) || grades.length === 0) {
+            return res.status(400).json({ error: 'Grades array is required' });
+        }
+
+        // Verify instructor owns the assignment through course
+        const assignment = await query(`
+            SELECT c.instructor_id 
+            FROM assignments a 
+            JOIN courses c ON a.course_id = c.id 
+            WHERE a.id = $1`, [id]);
+        if (!assignment.rows.length || assignment.rows[0].instructor_id !== req.user.id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const gradedSubmissions = [];
+
+        for (const grade of grades) {
+            const graded = await query(
+                `UPDATE assignment_submissions 
+                 SET score = $1, feedback = $2
+                 WHERE id = $3 AND assignment_id = $4
+                 RETURNING *`,
+                [grade.score, grade.feedback, grade.submission_id, id]
+            );
+
+            if (graded.rows.length > 0) {
+                gradedSubmissions.push(graded.rows[0]);
+            }
+        }
+
+        res.json({
+            message: `Graded ${gradedSubmissions.length} submissions successfully`,
+            graded_submissions: gradedSubmissions
+        });
+    } catch (err) { next(err); }
+});
+
+// GET /api/assignments/:id/export - Export assignment data for instructor
+router.get('/:id/export', authenticate, authorize('instructor'), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { format = 'json' } = req.query;
+
+        // Verify instructor owns the assignment through course
+        const assignment = await query(`
+            SELECT c.instructor_id 
+            FROM assignments a 
+            JOIN courses c ON a.course_id = c.id 
+            WHERE a.id = $1`, [id]);
+        if (!assignment.rows.length || assignment.rows[0].instructor_id !== req.user.id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const submissions = await query(
+            `SELECT sub.*, u.name, u.email,
+                    e.enrolled_at, e.progress_percent
+             FROM assignment_submissions sub
+             JOIN users u ON sub.user_id = u.id
+             JOIN enrollments e ON sub.user_id = e.student_id AND e.course_id = (SELECT course_id FROM assignments WHERE id = $1)
+             WHERE sub.assignment_id = $1
+             ORDER BY sub.submitted_at DESC`,
+            [id]
+        );
+
+        if (format === 'csv') {
+            // Convert to CSV format
+            const csv = [
+                'Student Name,Email,Submitted At,Score,Feedback,Status',
+                ...submissions.rows.map(sub =>
+                    `"${sub.name}","${sub.email}","${sub.submitted_at}","${sub.score || 'Not graded'}","${sub.feedback || ''}","${sub.score ? 'Graded' : 'Pending'}"`
+                )
+            ].join('\n');
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="assignment_${id}_submissions.csv"`);
+            res.send(csv);
+        } else {
+            res.json({ submissions: submissions.rows });
+        }
+    } catch (err) { next(err); }
+});
+
+module.exports = router;

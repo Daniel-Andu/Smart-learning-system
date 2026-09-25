@@ -1,0 +1,41 @@
+{
+    "name": "eduverse-backend",
+    "version": "1.0.0",
+    "description": "EduVerse AI Smart Learning Platform Backend",
+    "main": "src/index.js",
+    "scripts": {
+        "start": "node src/index.js",
+        "dev": "nodemon src/index.js",
+        "migrate": "node src/db/migrate.js",
+        "test": "jest"
+    },
+    "dependencies": {
+        "@getbrevo/brevo": "^2.2.0",
+        "@sendgrid/mail": "^8.1.6",
+        "@upstash/redis": "^1.38.0",
+        "axios": "^1.6.2",
+        "bcryptjs": "^2.4.3",
+        "cloudinary": "1.41.3",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "express-rate-limit": "^8.5.2",
+        "helmet": "^7.1.0",
+        "jsonwebtoken": "^9.0.2",
+        "morgan": "^1.10.0",
+        "multer": "^1.4.5-lts.1",
+        "multer-storage-cloudinary": "^4.0.0",
+        "nodemailer": "^6.9.7",
+        "pg": "^8.11.3",
+        "rate-limit-redis": "^5.0.0",
+        "redis": "^4.6.10",
+        "resend": "^6.14.0",
+        "socket.io": "^4.6.1",
+        "uuid": "^9.0.1"
+    },
+    "devDependencies": {
+        "jest": "^29.7.0",
+        "nodemon": "^3.0.2",
+        "supertest": "^6.3.3"
+    }
+}
