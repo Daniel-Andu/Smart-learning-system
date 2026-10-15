@@ -12,9 +12,50 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   google_id VARCHAR(255),
   is_active BOOLEAN DEFAULT true,
+  is_locked BOOLEAN DEFAULT false,
+  lock_reason TEXT,
+  locked_at TIMESTAMP,
+  last_login_at TIMESTAMP,
+  is_email_verified BOOLEAN NOT NULL DEFAULT true,
   two_factor_enabled BOOLEAN DEFAULT false,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  code_hash CHAR(64) NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Sessions used by the admin security dashboard
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ip_address VARCHAR(50),
+  user_agent TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  last_activity TIMESTAMP DEFAULT NOW()
+);
+
+-- Role permissions used by the admin security dashboard
+CREATE TABLE IF NOT EXISTS roles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name VARCHAR(50) UNIQUE NOT NULL,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  resource VARCHAR(100) NOT NULL,
+  action VARCHAR(100) NOT NULL,
+  granted BOOLEAN DEFAULT false,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(role_id, resource, action)
 );
 
 -- Courses
@@ -172,7 +213,11 @@ CREATE TABLE IF NOT EXISTS notifications (
   message TEXT NOT NULL,
   type VARCHAR(50),
   link TEXT,
+  course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
+  priority VARCHAR(20) DEFAULT 'normal',
+  expires_at TIMESTAMP,
   is_read BOOLEAN DEFAULT false,
+  read_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -184,6 +229,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   resource VARCHAR(255),
   ip_address VARCHAR(50),
   details JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Security dashboard activity and event records
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(255) NOT NULL,
+  details TEXT,
+  level VARCHAR(50) DEFAULT 'info',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS security_events (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  event_type VARCHAR(255) NOT NULL,
+  description TEXT,
+  severity VARCHAR(20) DEFAULT 'low',
+  ip_address VARCHAR(50),
   created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -203,6 +268,8 @@ CREATE TABLE IF NOT EXISTS assignments (
   description TEXT,
   due_date TIMESTAMP,
   max_points INTEGER DEFAULT 100,
+  total_points INTEGER DEFAULT 100,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -211,12 +278,18 @@ CREATE TABLE IF NOT EXISTS assignments (
 CREATE TABLE IF NOT EXISTS assignment_submissions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   assignment_id UUID REFERENCES assignments(id) ON DELETE CASCADE,
+  student_id UUID REFERENCES users(id) ON DELETE CASCADE,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   content TEXT,
+  submission_text TEXT,
   file_url TEXT,
   score INTEGER,
+  feedback TEXT,
   submitted_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(assignment_id, user_id)
+  graded_at TIMESTAMP,
+  graded_by UUID REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(assignment_id, student_id)
 );
 
 -- Assessments
@@ -225,7 +298,7 @@ CREATE TABLE IF NOT EXISTS assessments (
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   title VARCHAR(500) NOT NULL,
   description TEXT,
-  type VARCHAR(50) CHECK (type IN ('quiz', 'exam', 'assignment')),
+  type VARCHAR(50) CHECK (type IN ('midterm', 'final', 'practical', 'project', 'quiz', 'exam', 'assignment')),
   scheduled_date TIMESTAMP,
   duration_minutes INTEGER,
   total_points INTEGER DEFAULT 100,

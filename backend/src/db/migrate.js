@@ -1,11 +1,43 @@
 require('dotenv').config();
 const { pool } = require('./index');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 
 async function migrate() {
     const client = await pool.connect();
     try {
         console.log('Running migrations...');
+
+        const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+        await client.query(schema);
+        console.log('✓ base schema');
+
+        await client.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false,
+            ADD COLUMN IF NOT EXISTS lock_reason TEXT,
+            ADD COLUMN IF NOT EXISTS locked_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN NOT NULL DEFAULT true
+        `);
+
+        await client.query(`
+            ALTER TABLE notifications
+            ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
+            ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'normal',
+            ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS read_at TIMESTAMP
+        `);
+
+        await client.query(`
+            INSERT INTO roles (name, description)
+            VALUES ('admin', 'Platform administrator'),
+                   ('instructor', 'Course instructor'),
+                   ('student', 'Platform student')
+            ON CONFLICT (name) DO NOTHING
+        `);
+        console.log('✓ user, notification, and security schema');
 
         // Add missing columns to existing tables
         await client.query(`
@@ -20,6 +52,15 @@ async function migrate() {
             ADD COLUMN IF NOT EXISTS link TEXT
         `);
         console.log('✓ notifications.link');
+
+        await client.query(`
+            ALTER TABLE assessments
+            DROP CONSTRAINT IF EXISTS assessments_type_check;
+            ALTER TABLE assessments
+            ADD CONSTRAINT assessments_type_check
+            CHECK (type IN ('midterm', 'final', 'practical', 'project', 'quiz', 'exam', 'assignment'))
+        `);
+        console.log('✓ assessment types');
 
         await client.query(`
             ALTER TABLE courses 
