@@ -52,6 +52,17 @@ VITE_API_URL=https://eduverse-backend-qz4a.onrender.com/api
 - Try logging in again
 - Check that the errors are resolved
 
+## Vercel Build Configuration
+
+The project now includes `vercel.json` configuration files in both frontend directories to fix build permission issues. These files are automatically picked up by Vercel when you deploy.
+
+**Important:** When you connect your GitHub repository to Vercel, make sure to:
+1. Select the root directory for each frontend project
+2. For student frontend: Point to `student-frontend` directory
+3. For admin frontend: Point to `admin-frontend` directory
+
+Or simply deploy each frontend separately by selecting the respective subdirectory in Vercel.
+
 ## Quick Fix Steps
 
 ### 1. Backend (Render) - Environment Variables
