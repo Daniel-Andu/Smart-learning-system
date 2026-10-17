@@ -1,0 +1,30 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor and operating-system files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Frontend build output
+dist/
+
+
+# Ignore build output in all project folders
+**/dist/
+**/build/
+

@@ -39,8 +39,12 @@ const io = new Server(httpServer, {
             process.env.ADMIN_FRONTEND_URL || 'http://localhost:3001',
             process.env.INSTRUCTOR_FRONTEND_URL || 'http://localhost:3002',
             'http://localhost:3003',
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1:3001',
+            'http://127.0.0.1:3002',
+            'http://127.0.0.1:3003',
         ],
-        methods: ['GET', 'POST'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         credentials: true,
     },
 });
@@ -54,8 +58,13 @@ app.use(cors({
         process.env.ADMIN_FRONTEND_URL || 'http://localhost:3001',
         process.env.INSTRUCTOR_FRONTEND_URL || 'http://localhost:3002',
         'http://localhost:3003',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+        'http://127.0.0.1:3002',
+        'http://127.0.0.1:3003',
     ],
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
