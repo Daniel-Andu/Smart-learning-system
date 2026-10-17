@@ -43,6 +43,8 @@ const io = new Server(httpServer, {
             'http://127.0.0.1:3001',
             'http://127.0.0.1:3002',
             'http://127.0.0.1:3003',
+            // Allow all Vercel deployments temporarily for debugging
+            /\.vercel\.app$/,
         ],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         credentials: true,
@@ -62,6 +64,8 @@ app.use(cors({
         'http://127.0.0.1:3001',
         'http://127.0.0.1:3002',
         'http://127.0.0.1:3003',
+        // Allow all Vercel deployments temporarily for debugging
+        /\.vercel\.app$/,
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

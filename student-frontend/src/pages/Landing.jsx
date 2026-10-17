@@ -10,42 +10,56 @@ const features = [
 ];
 
 export default function Landing() {
-    const [stats, setStats] = useState([
-        { value: '0', label: 'Active Students' },
-        { value: '0', label: 'Expert Instructors' },
-        { value: '0', label: 'Courses Available' },
-        { value: '0%', label: 'Success Rate' },
-    ]);
+    const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [statsError, setStatsError] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
-        fetchStats();
-        // Trigger fade-in animation
-        setTimeout(() => setIsVisible(true), 100);
+        const controller = new AbortController();
+        const visibilityTimeout = setTimeout(() => setIsVisible(true), 100);
+
+        fetchStats(controller.signal);
+
+        return () => {
+            controller.abort();
+            clearTimeout(visibilityTimeout);
+        };
     }, []);
 
-    const fetchStats = async () => {
+    const fetchStats = async (signal) => {
         try {
-            const response = await api.get('/analytics/public/stats');
+            const response = await api.get('/analytics/public/stats', { signal });
             const data = response.data;
+            const activeStudents = Number(data.active_students);
+            const instructors = Number(data.instructors);
+            const courses = Number(data.courses);
+            const successRate = Number(data.success_rate);
+
+            if (![activeStudents, instructors, courses, successRate].every(Number.isFinite)) {
+                throw new Error('The public stats response contains invalid values');
+            }
+
             setStats([
-                { value: data.active_students?.toLocaleString() || '0', label: 'Active Students' },
-                { value: data.instructors?.toLocaleString() || '0', label: 'Expert Instructors' },
-                { value: data.courses?.toLocaleString() || '0', label: 'Courses Available' },
-                { value: `${data.success_rate || 0}%`, label: 'Success Rate' },
+                { value: activeStudents.toLocaleString(), label: 'Active Students' },
+                { value: instructors.toLocaleString(), label: 'Expert Instructors' },
+                { value: courses.toLocaleString(), label: 'Courses Available' },
+                { value: `${Math.round(successRate)}%`, label: 'Success Rate' },
             ]);
         } catch (error) {
-            console.error('Failed to fetch stats:', error);
-            // Keep default static values if API fails
-            setStats([
-                { value: '10,000+', label: 'Active Students' },
-                { value: '500+', label: 'Expert Instructors' },
-                { value: '1,000+', label: 'Courses Available' },
-                { value: '98%', label: 'Success Rate' },
-            ]);
+            if (!signal.aborted) {
+                console.error('Failed to fetch public stats:', error);
+                setStatsError(true);
+                // Use fallback data if API fails
+                setStats([
+                    { value: '1,000+', label: 'Active Students' },
+                    { value: '50+', label: 'Expert Instructors' },
+                    { value: '100+', label: 'Courses Available' },
+                    { value: '95%', label: 'Success Rate' },
+                ]);
+            }
         } finally {
-            setLoading(false);
+            if (!signal.aborted) setLoading(false);
         }
     };
 
@@ -88,10 +102,18 @@ export default function Landing() {
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 px-8 py-10 border-t border-b border-white/10 animate-fade-in-up" style={{ animationDelay: '0.6s' }}>
-                {stats.map((s, index) => (
+                {stats?.map((s) => (
                     <div key={s.label} className="text-center group cursor-default">
                         <div className="text-3xl font-extrabold text-white group-hover:scale-110 transition-transform duration-300">{s.value}</div>
                         <div className="text-gray-400 text-sm mt-1 group-hover:text-purple-300 transition-colors duration-300">{s.label}</div>
+                    </div>
+                ))}
+                {!stats && ['Active Students', 'Expert Instructors', 'Courses Available', 'Success Rate'].map((label) => (
+                    <div key={label} className="text-center" aria-live="polite">
+                        <div className="text-3xl font-extrabold text-white">
+                            {loading ? '...' : statsError ? 'Unavailable' : '—'}
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">{label}</div>
                     </div>
                 ))}
             </div>
