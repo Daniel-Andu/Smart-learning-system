@@ -1,5 +1,41 @@
 # Environment Variables Checklist - CRITICAL
 
+## IMPORTANT: Vercel Configuration Issue
+
+The build is failing because Vercel is trying to build from the wrong directory. You need to configure Vercel to use the subdirectory as the root.
+
+### For Student Frontend (Vercel):
+
+1. Go to https://vercel.com/dashboard
+2. Click on your student frontend project
+3. Go to **Settings** > **General**
+4. Scroll down to **Build & Development Settings**
+5. Find **Root Directory**
+6. Change it from `/` to `student-frontend`
+7. Click **Save**
+8. Go to **Environment Variables** and set:
+   ```
+   VITE_API_URL=https://eduverse-backend-qz4a.onrender.com/api
+   ```
+9. Click **Save**
+10. Go to **Deployments** tab and click **Redeploy**
+
+### For Admin Frontend (Vercel):
+
+1. Go to https://vercel.com/dashboard
+2. Click on your admin frontend project
+3. Go to **Settings** > **General**
+4. Scroll down to **Build & Development Settings**
+5. Find **Root Directory**
+6. Change it from `/` to `admin-frontend`
+7. Click **Save**
+8. Go to **Environment Variables** and set:
+   ```
+   VITE_API_URL=https://eduverse-backend-qz4a.onrender.com/api
+   ```
+9. Click **Save**
+10. Go to **Deployments** tab and click **Redeploy**
+
 ## The Problem
 You're getting 404 errors because the frontend is calling the wrong URL:
 - ❌ Wrong: `https://eduverse-backend-qz4a.onrender.com/auth/login`
