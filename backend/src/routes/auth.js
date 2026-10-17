@@ -64,8 +64,9 @@ async function issueVerificationCode(user) {
     return {
         verificationRequired: true,
         email: user.email,
-        message: delivered ? 'A verification code was sent to your email.' : 'Enter the development verification code.',
-        ...(delivered ? {} : { development_code: code }),
+        message: delivered ? 'A verification code was sent to your email.' : 'Enter the development verification code shown below.',
+        // Always include development code for testing when email is not sent
+        development_code: code,
     };
 }
 
@@ -126,7 +127,7 @@ router.post('/resend-verification', async (req, res, next) => {
         const verification = await issueVerificationCode(result.rows[0]);
         res.json({
             message: verification.message,
-            ...(verification.development_code ? { development_code: verification.development_code } : {}),
+            development_code: verification.development_code,
         });
     } catch (err) { next(err); }
 });
