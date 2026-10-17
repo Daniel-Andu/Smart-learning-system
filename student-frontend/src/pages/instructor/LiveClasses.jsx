@@ -48,7 +48,8 @@ export default function InstructorLiveClasses() {
             const response = await api.get('/live/instructor/sessions');
             setSessions(response.data.sessions);
         } catch (error) {
-            toast.error('Failed to fetch live sessions');
+            console.error('Error fetching sessions:', error);
+            toast.error(error.response?.data?.error || 'Failed to fetch live sessions');
         } finally {
             setLoading(false);
         }
@@ -66,7 +67,22 @@ export default function InstructorLiveClasses() {
     const handleCreateSession = async (e) => {
         e.preventDefault();
         try {
-            await api.post('/live/sessions', formData);
+            // Validate required fields
+            if (!formData.title || !formData.courseId || !formData.scheduled_at) {
+                toast.error('Please fill in all required fields');
+                return;
+            }
+
+            const sessionData = {
+                course_id: formData.courseId,
+                title: formData.title,
+                description: formData.description || '',
+                scheduled_at: formData.scheduled_at,
+                duration_minutes: parseInt(formData.duration_minutes) || 60,
+                meeting_url: formData.meeting_url || ''
+            };
+
+            await api.post('/live/sessions', sessionData);
             toast.success('Live session created successfully!');
             setShowCreateForm(false);
             setFormData({
@@ -79,7 +95,8 @@ export default function InstructorLiveClasses() {
             });
             fetchSessions();
         } catch (error) {
-            toast.error('Failed to create live session');
+            console.error('Error creating session:', error);
+            toast.error(error.response?.data?.error || 'Failed to create live session');
         }
     };
 
